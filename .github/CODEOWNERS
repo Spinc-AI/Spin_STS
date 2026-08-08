@@ -1,7 +1,10 @@
-# Default owner for anything not matched below
-
+# Code owner — auto-requested as reviewer, and (with "Require review from
+# Code Owners" enabled on the main ruleset) required to approve every PR
+# before it can merge into main. Deliberately a single owner for the whole
+# repo: main is meant to be under one person's sole approval, regardless of
+# which module a PR touches. Don't add per-folder entries for teammates here
+# -- that would let them satisfy the code-owner requirement on their own PRs
+# without your approval. If you want a teammate auto-requested as an extra
+# reviewer for visibility, @-mention them manually on the PR instead --
+# that's non-binding and doesn't affect who can approve.
 *                   @parsafaramarzi
-
-/Core_LLM/ @parsafaramarzi
-/Controller/ @parsafaramarzi
-/TTS/ @teammate-github-handle
