@@ -1,0 +1,7 @@
+# Default owner for anything not matched below
+
+*                   @parsafaramarzi
+
+/Core_LLM/ @parsafaramarzi
+/Controller/ @parsafaramarzi
+/TTS/ @teammate-github-handle

@@ -1,1 +1,48 @@
 /.claude
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Environment / secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Model weights / caches (Core_LLM downloads these from Hugging Face) ---
+# Never commit model weights to git -- they're multi-GB and belong in the HF
+# cache or a model registry, not version control.
+*.bin
+*.safetensors
+*.pt
+*.ckpt
+.cache/
+huggingface/
+hf_cache/
+
+# --- Audio test artifacts ---
+*.wav
+*.mp3
+!TTS/**/samples/*.wav
+!Core_LLM/**/samples/*.wav
+
+# --- IDE / editor ---
+.vscode/
+.idea/
+*.swp
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db
+
+# --- Logs ---
+*.log
