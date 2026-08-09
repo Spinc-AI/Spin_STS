@@ -20,6 +20,12 @@ class TTSRequest(BaseModel):
 
 
 class TTSResponse(BaseModel):
+    """
+    نکته: این مدل دیگه توسط /synthesize استفاده نمی‌شه (اون اندپوینت الان
+    بایت‌های خام audio/wav برمی‌گردونه، نه JSON). این مدل رو نگه داشتیم
+    برای مصرف‌کننده‌های احتمالی دیگه که به فرمت JSON نیاز دارن (مثلاً
+    یک اندپوینت جایگزین در آینده)، و برای مستندسازی shape داده‌ی history.
+    """
     success: bool
     message: str
     audio_url: Optional[str] = None

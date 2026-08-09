@@ -10,7 +10,7 @@ from typing import Optional
 
 from config import ALLOWED_ORIGINS, HOST, PORT, API_KEY, TEMP_AUDIO_DIR, check_files
 from model import TTSManager
-from schemas import TTSRequest, TTSResponse, ModelInfo, LoadResponse
+from schemas import TTSRequest, ModelInfo
 
 manager = TTSManager()
 
@@ -38,8 +38,8 @@ async def lifespan(app):
 
 app = FastAPI(
     title="TTS API",
-    description="Text-to-Speech API with OmniVoice (Persian voice cloning, CPU)",
-    version="1.0.0",
+    description="Text-to-Speech API with OmniVoice (Persian voice cloning)",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
@@ -62,12 +62,13 @@ def verify_api_key(x_api_key: Optional[str] = Header(default=None)):
 async def root():
     return {
         "message": "TTS API Server (OmniVoice)",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "endpoints": {
             "/": "GET - This info",
             "/health": "GET - Check API health",
-            "/synthesize": "POST - Convert text to speech",
-            "/download/{filename}": "GET - Download generated audio",
+            "/synthesize": "POST - Convert text to speech, returns raw audio/wav bytes "
+                            "(metadata in X-Duration / X-Latency headers)",
+            "/download/{filename}": "GET - Re-download a previously generated audio file",
             "/history": "GET - Get conversion history",
             "/clear_history": "POST - Clear history",
         },
@@ -90,9 +91,22 @@ async def list_models():
     return ModelInfo(available=manager.available(), loaded=manager.loaded)
 
 
-@app.post("/synthesize", response_model=TTSResponse)
+@app.post("/synthesize")
 async def synthesize(request: TTSRequest, x_api_key: Optional[str] = Header(default=None)):
-    """تبدیل متن به گفتار"""
+    """
+    تبدیل متن به گفتار.
+
+    برخلاف نسخه‌ی قبلی، این اندپوینت دیگه JSON با آدرس دانلود برنمی‌گردونه؛
+    مستقیماً بایت‌های فایل صوتی (audio/wav) رو در بدنه‌ی پاسخ برمی‌گردونه،
+    چون Controller دقیقاً همینو انتظار داره (fetch یک‌مرحله‌ای).
+
+    متادیتا (duration/latency) توی هدرهای HTTP برگردونده می‌شه:
+      X-Duration: طول صدا به ثانیه
+      X-Latency:  زمان تولید به ثانیه
+
+    خطاها هم دیگه با status code واقعی برمی‌گردن (نه 200 + success:false)،
+    که یعنی شکست دیگه silent نیست.
+    """
     verify_api_key(x_api_key)
 
     if not request.text or not request.text.strip():
@@ -112,26 +126,36 @@ async def synthesize(request: TTSRequest, x_api_key: Optional[str] = Header(defa
     try:
         output_path, message = manager.synthesize_text(request.text, speed=request.speed or 1.0)
 
-        if output_path:
-            duration = manager.get_duration(output_path)
-            latency = round(time.time() - start, 2)
-            return TTSResponse(
-                success=True,
-                message="Speech synthesized successfully",
-                audio_url=f"/download/{os.path.basename(output_path)}",
-                duration=duration,
-                latency=latency,
-                text=request.text[:100],
-            )
-        else:
-            return TTSResponse(success=False, message=message)
+        if not output_path:
+            # خطای منطقی synthesis (مثلاً متن خیلی کوتاه) -> 422، نه 200 با success:false
+            raise HTTPException(status_code=422, detail=message)
 
+        duration = manager.get_duration(output_path)
+        latency = round(time.time() - start, 2)
+
+        return FileResponse(
+            output_path,
+            media_type="audio/wav",
+            filename=os.path.basename(output_path),
+            headers={
+                "X-Duration": str(duration),
+                "X-Latency": str(latency),
+            },
+        )
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/download/{filename}")
 async def download_file(filename: str):
+    """
+    دانلود مجدد یک فایل صوتی که قبلاً تولید شده (بر اساس تاریخچه).
+    توجه: پاسخ اصلی /synthesize دیگه به این اندپوینت وابسته نیست؛
+    این فقط برای دسترسی مجدد به فایل‌های قبلی نگه داشته شده.
+    """
     safe_name = os.path.basename(filename)
     file_path = os.path.join(TEMP_AUDIO_DIR, safe_name)
     if not os.path.exists(file_path):

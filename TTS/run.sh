@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 VENV_DIR="venv"
-REQ_FILE="Requirements.txt"
+REQ_FILE="requirements.txt"
 
 echo "======================================================================"
 echo " TTS API Server (OmniVoice backend) - Launcher"
@@ -42,10 +42,10 @@ else
 fi
 
 # 5) Optional environment variables (uncomment / edit as needed)
-# export TTS_PORT=8000
+# export TTS_PORT=8002
 # export TTS_API_KEY="your-secret-key"
 # export OMNIVOICE_REF_AUDIO="/path/to/ref.wav"
-# export TTS_AUDIO_DIR="/tmp/tts_audio"
+# export TTS_AUDIO_DIR="/path/to/tts_audio"
 
 # 6) Run the server
 echo "----------------------------------------------------------------------"
@@ -54,4 +54,4 @@ echo "----------------------------------------------------------------------"
 python3 main.py
 
 # Alternative (equivalent), if you prefer running uvicorn directly with reload:
-# uvicorn main:app --host 0.0.0.0 --port "${TTS_PORT:-8000}" --reload
+# uvicorn main:app --host 0.0.0.0 --port "${TTS_PORT:-8002}" --reload

@@ -6,7 +6,7 @@ setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 set VENV_DIR=venv
-set REQ_FILE=Requirements.txt
+set REQ_FILE=requirements.txt
 
 echo ======================================================================
 echo  TTS API Server (OmniVoice backend) - Launcher
@@ -47,10 +47,10 @@ if exist "%REQ_FILE%" (
 )
 
 REM 5) Optional environment variables (uncomment / edit as needed)
-REM set TTS_PORT=8000
+REM set TTS_PORT=8002
 REM set TTS_API_KEY=your-secret-key
-REM set OMNIVOICE_REF_AUDIO=C:\Users\lotus\Desktop\omnivoice2\ref.wav
-REM set TTS_AUDIO_DIR=C:\temp\tts_audio
+REM set OMNIVOICE_REF_AUDIO=%~dp0assets\ref.wav
+REM set TTS_AUDIO_DIR=%~dp0tts_audio
 
 REM 6) Run the server
 echo ----------------------------------------------------------------------
@@ -59,7 +59,7 @@ echo ----------------------------------------------------------------------
 python main.py
 
 REM Alternative (equivalent), if you prefer running uvicorn directly with reload:
-REM uvicorn main:app --host 0.0.0.0 --port %TTS_PORT% --reload
+REM uvicorn main:app --host 0.0.0.0 --port 8002 --reload
 
 endlocal
 pause

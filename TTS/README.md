@@ -1,31 +1,6 @@
-# TTS Service (pending)
-
-Not implemented yet — owned by another team member. This folder is a
-placeholder so the Controller has something concrete to call once it lands.
-
-## Expected contract
-
-The Controller (`Controller/controller.py`) calls this service the same way
-it calls Core_LLM: a small HTTP API, same house style as the rest of this
-project (FastAPI, runs standalone, no shared imports).
-
-| Method & path | Purpose |
-|---|---|
-| `GET /` | health check |
-| `POST /synthesize` | body `{"text": "..."}` -> audio bytes (`audio/wav`) |
-
-Suggested port: `8002` (Core_LLM uses `8001`, Controller uses `9000`).
-
-`Controller/config.py` already has a `TTS_URL` setting (default
-`http://localhost:8002`) pointed at this contract — once this service exists
-and matches it, the Controller needs no changes. If the real implementation
-ends up shaped differently (different route, multipart instead of JSON,
-extra required fields like a voice/speaker id), update
-`Controller/controller.py`'s `tts_synthesize()` to match.
-
 # TTS API Server (OmniVoice Backend)
 
-A FastAPI-based Text-to-Speech server built on top of **OmniVoice**, with support for Persian voice cloning. Runs on CPU by default.
+A FastAPI-based Text-to-Speech server built on top of **OmniVoice**, with support for Persian voice cloning. Runs on GPU (CUDA) if available, otherwise falls back to CPU.
 
 ## Features
 
@@ -34,7 +9,7 @@ A FastAPI-based Text-to-Speech server built on top of **OmniVoice**, with suppor
 - Optional API key authentication
 - Synthesis history tracking
 - Automatic emoji/control-character stripping from input text
-- Generated audio available for download over HTTP
+- `/synthesize` returns the generated audio directly as `audio/wav` bytes (no separate download step required)
 
 ## Project Structure
 
@@ -44,15 +19,18 @@ A FastAPI-based Text-to-Speech server built on top of **OmniVoice**, with suppor
 ├── model.py              # TTSManager: loads OmniVoice model, runs synthesis, tracks history
 ├── config.py              # All configuration (model, server, CORS, auth, paths)
 ├── schemas.py              # Pydantic request/response models
-├── Requirements.txt        # Python dependencies
+├── requirements.txt        # Python dependencies
 ├── run.sh                  # Launcher script (Linux/macOS)
-└── run.bat                  # Launcher script (Windows)
+├── run.bat                  # Launcher script (Windows)
+└── assets/
+    └── ref.wav              # Reference voice for cloning (add your own - not included)
 ```
 
 ## Requirements
 
 - Python 3.10+
-- A reference `.wav` file (3-10 seconds) for voice cloning (optional — falls back to auto-voice mode if not found)
+- (Optional, recommended) an NVIDIA GPU with CUDA for real-time-or-faster synthesis
+- A reference `.wav` file (3-10 seconds) at `assets/ref.wav` for voice cloning — optional, falls back to auto-voice mode if missing
 
 ## Setup & Run
 
@@ -72,78 +50,89 @@ chmod +x run.sh
 Both scripts will:
 1. Create a virtual environment (`venv/`) if one doesn't exist
 2. Activate it
-3. Install dependencies from `Requirements.txt`
+3. Install dependencies from `requirements.txt`
 4. Start the server (`python main.py`)
 
-The server will be available at `http://localhost:8000` (or the port set via `TTS_PORT`).
+The server will be available at `http://localhost:8002` by default (or the port set via `TTS_PORT`).
 
 ### Manual setup (alternative)
 
 ```bash
 python -m venv venv
 source venv/bin/activate   # venv\Scripts\activate on Windows
-pip install -r Requirements.txt
+pip install -r requirements.txt
 python main.py
 ```
 
+`torch` and the `omnivoice` package aren't installable directly from PyPI in all cases — see the comments in `requirements.txt` for the correct install commands (CUDA-specific torch build, OmniVoice from source).
+
 ## Configuration
 
-All configuration is done via environment variables (see `config.py`). None are required — sensible defaults are used if unset.
+All configuration is done via environment variables (see `config.py`). None are required — sensible, machine-independent defaults are used if unset.
 
 | Variable | Default | Description |
 |---|---|---|
 | `OMNIVOICE_MODEL` | `k2-fsa/OmniVoice` | Model name/path to load |
-| `OMNIVOICE_NUM_STEP` | `16` | Number of generation steps (lower = faster on CPU) |
-| `OMNIVOICE_REF_AUDIO` | `C:\Users\lotus\Desktop\omnivoice2\ref.wav` | Reference voice for cloning |
+| `OMNIVOICE_DEVICE` | `cuda:0` if a GPU is detected, else `cpu` | Inference device |
+| `OMNIVOICE_DTYPE` | `float16` on GPU, `float32` on CPU | Inference precision |
+| `OMNIVOICE_NUM_STEP` | `32` on GPU, `16` on CPU | Generation steps (lower = faster, lower quality) |
+| `OMNIVOICE_REF_AUDIO` | `<project_dir>/assets/ref.wav` | Reference voice for cloning |
 | `OMNIVOICE_REF_TEXT` | `""` | Transcript of the reference audio (optional) |
-| `TTS_PORT` | `8000` | Server port |
+| `TTS_PORT` | `8002` | Server port (matches the Controller's default `TTS_URL` port) |
 | `TTS_API_KEY` | `""` (disabled) | If set, requests must include an `x-api-key` header |
-| `TTS_AUDIO_DIR` | `C:\temp\tts_audio` | Directory where generated audio files are stored |
+| `TTS_AUDIO_DIR` | `<project_dir>/tts_audio` | Directory where generated audio files are stored |
 
-> ⚠️ Note: the default paths above are Windows-style. On Linux/macOS, set `OMNIVOICE_REF_AUDIO` and `TTS_AUDIO_DIR` to valid paths for your system before running.
-
-The model always runs on `DEVICE = "cpu"` with `DTYPE = "float32"` (hardcoded in `config.py`).
+All default paths are relative to the project directory, so the server runs out of the box on any machine — no need to edit hardcoded paths.
 
 ## API Overview
-
-Full request/response details are in the separate API documentation, but in short:
 
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/` | List of available endpoints |
 | GET | `/health` | Server/model health check |
 | GET | `/models` | List available and currently loaded models |
-| POST | `/synthesize` | Convert text to speech |
-| GET | `/download/{filename}` | Download generated audio file |
+| POST | `/synthesize` | Convert text to speech — **returns raw `audio/wav` bytes** |
+| GET | `/download/{filename}` | Re-fetch a previously generated audio file by name |
 | GET | `/history?limit=20` | Get synthesis history |
 | POST | `/clear_history` | Clear synthesis history |
 | GET | `/docs` | Interactive Swagger UI (auto-generated by FastAPI) |
 
-### Example request
+### `POST /synthesize`
 
-```bash
-curl -X POST http://localhost:8000/synthesize \
-  -H "Content-Type: application/json" \
-  -d '{"text": "سلام دنیا", "speed": 1.0}'
-```
-
-### Example response
+**Request:**
 
 ```json
 {
-  "success": true,
-  "message": "Speech synthesized successfully",
-  "audio_url": "/download/tmpabcd1234.wav",
-  "duration": 2.31,
-  "latency": 1.44,
-  "text": "سلام دنیا"
+  "text": "سلام دنیا",
+  "speed": 1.0,
+  "language": "fa"
 }
 ```
 
-Then download the file:
+**Response (success):** the response body is the raw `.wav` audio file (`Content-Type: audio/wav`). Metadata is returned in headers:
+
+```
+X-Duration: 2.31
+X-Latency: 1.44
+```
+
+**Response (error):** a real HTTP error status with a JSON `detail` body — no more silent `200 OK` with `success: false`.
+
+| Code | Meaning |
+|---|---|
+| `400` | Text is empty |
+| `401` | Invalid API key (only if auth is enabled) |
+| `422` | Synthesis rejected the input (e.g. text too short) |
+| `503` | Model not loaded / not available |
+| `500` | Internal synthesis error |
+
+### Example
 
 ```bash
-curl -O http://localhost:8000/download/tmpabcd1234.wav
+curl -X POST http://localhost:8002/synthesize \
+  -H "Content-Type: application/json" \
+  -d '{"text": "سلام دنیا", "speed": 1.0}' \
+  --output out.wav
 ```
 
 ## Notes & Limitations
@@ -151,6 +140,6 @@ curl -O http://localhost:8000/download/tmpabcd1234.wav
 - `text` is capped at 500 characters (`MAX_TEXT_LENGTH` in `config.py`); anything longer is truncated.
 - `speed` is clamped between `0.5` and `2.0`.
 - If the reference audio file is missing, the server falls back to an auto/random voice instead of failing.
-- Failed synthesis (e.g., text too short) returns HTTP `200` with `"success": false` in the body — always check the `success` field, not just the status code.
 - CORS is currently wide open (`ALLOWED_ORIGINS = ["*"]`) — tighten this before deploying publicly.
 - API key auth is optional and disabled by default; enable it by setting `TTS_API_KEY`.
+- `/download/{filename}` is kept only for re-fetching previously generated files by name; the primary `/synthesize` flow no longer depends on it.
