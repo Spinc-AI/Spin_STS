@@ -1,14 +1,16 @@
 """Spin STS Controller.
 
-Coordinates the two modules over HTTP -- audio in, audio out:
+Coordinates the two modules over HTTP. Input (audio or text) and output
+(audio or text) are independent choices, so all four combinations work
+through the same endpoint, POST /converse:
 
-    user  <->  [this FastAPI service]  <->  Core_LLM (audio-capable Gemma)
-                                        <->  TTS (pending -- see TTS/README.md)
+    speech-to-speech -- file in,  output=audio -> Core_LLM/chat_audio -> TTS
+    speech-to-text   -- file in,  output=text  -> Core_LLM/chat_audio only
+    text-to-speech   -- text in,  output=audio -> Core_LLM/chat      -> TTS
+    text-to-text     -- text in,  output=text  -> Core_LLM/chat only
 
-Flow for POST /speak:
-  1. audio -> Core_LLM's /chat_audio (multimodal: no separate STT step)
-  2. Core_LLM's text reply -> TTS's /synthesize
-  3. TTS's audio -> returned to the caller
+TTS is only ever called when output=audio -- the text-to-text and
+speech-to-text modes work today even though TTS/ doesn't exist yet.
 
 Everything talks over HTTP, so either module can be swapped out or rewritten
 without touching this file, as long as its API holds.
@@ -45,13 +47,23 @@ def tts_health() -> bool:
 
 
 def llm_chat_audio(audio: bytes, filename: str, system_prompt: str, text: str | None) -> str:
-    """Send audio to Core_LLM, get back the model's text reply."""
+    """Send audio to Core_LLM's /chat_audio, get back the model's text reply."""
     with _client() as c:
         r = c.post(
             f"{config.LLM_URL}/chat_audio",
             files={"file": (filename, audio)},
             data={"system_prompt": system_prompt, "text": text or ""},
         )
+    if r.status_code != 200:
+        raise RuntimeError(f"Core_LLM call failed ({r.status_code}): {r.text}")
+    return r.json()["reply"]
+
+
+def llm_chat_text(text: str, system_prompt: str) -> str:
+    """Send text to Core_LLM's plain /chat, get back the model's text reply."""
+    messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": text}]
+    with _client() as c:
+        r = c.post(f"{config.LLM_URL}/chat", json={"messages": messages})
     if r.status_code != 200:
         raise RuntimeError(f"Core_LLM call failed ({r.status_code}): {r.text}")
     return r.json()["reply"]
@@ -79,29 +91,46 @@ def health():
     return {"controller": "ok", "llm": llm_health(), "tts": tts_health()}
 
 
-@app.post("/speak")
-def speak(
-    file: UploadFile = File(...),
-    system_prompt: str | None = Form(default=None),
+@app.post("/converse")
+def converse(
+    file: UploadFile | None = File(default=None),
     text: str | None = Form(default=None),
+    system_prompt: str | None = Form(default=None),
+    output: str = Form(default="audio"),  # "audio" or "text"
 ):
-    """Audio in, audio out: Core_LLM transcribes+responds, TTS speaks the reply."""
-    audio = file.file.read()
+    """The one entry point for all four modes -- speech-to-speech,
+    speech-to-text, text-to-speech, text-to-text. Provide EXACTLY ONE of
+    `file` (audio) or `text` as input; `output` picks the reply's shape.
+    """
+    if output not in ("audio", "text"):
+        raise HTTPException(400, "output must be 'audio' or 'text'")
+    if file is None and not text:
+        raise HTTPException(400, "provide either an audio 'file' or 'text'")
+    if file is not None and text:
+        raise HTTPException(400, "provide only one of 'file' or 'text', not both")
+
     prompt = system_prompt or config.DEFAULT_SYSTEM_PROMPT
 
     try:
-        reply_text = llm_chat_audio(audio, file.filename or "audio.wav", prompt, text)
+        if file is not None:
+            audio = file.file.read()
+            reply_text = llm_chat_audio(audio, file.filename or "audio.wav", prompt, None)
+        else:
+            reply_text = llm_chat_text(text, prompt)
     except Exception as exc:
         raise HTTPException(502, f"LLM step failed: {exc}")
+
+    if output == "text":
+        return {"reply": reply_text}
 
     try:
         reply_audio = tts_synthesize(reply_text)
     except Exception as exc:
         raise HTTPException(502, f"TTS step failed: {exc}")
 
-    # Reply text isn't returned alongside the audio (HTTP headers can't safely
-    # carry arbitrary UTF-8, e.g. Persian replies) -- log it if you need it
-    # for debugging.
+    # Reply text isn't also returned alongside the audio (HTTP headers can't
+    # safely carry arbitrary UTF-8, e.g. Persian replies) -- use output=text
+    # if you need the text itself instead of guessing from the audio.
     return Response(content=reply_audio, media_type="audio/wav")
 
 

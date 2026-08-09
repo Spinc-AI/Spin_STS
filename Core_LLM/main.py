@@ -1,8 +1,9 @@
 """HTTP layer for Core_LLM — a thin FastAPI wrapper around model.MANAGER.
 
 The Controller calls this service over HTTP instead of importing Core_LLM
-directly. Just one route that matters: /chat_audio -- give the audio-capable
-Gemma model the caller's audio directly, no separate STT step.
+directly. Two routes that matter: /chat_audio -- give the audio-capable
+Gemma model the caller's audio directly, no separate STT step -- and /chat,
+the plain text-only path (same underlying model, just no audio attached).
 
 Run:
     python main.py            # or: uvicorn main:app --host 0.0.0.0 --port 8001
@@ -14,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import config
 from model import MANAGER
-from schemas import ChatAudioResponse, HealthResponse
+from schemas import ChatAudioResponse, ChatRequest, ChatResponse, HealthResponse
 
 app = FastAPI(title="Core LLM Service")
 
@@ -30,6 +31,17 @@ app.add_middleware(
 async def health():
     """Liveness check, and whether the model is currently loaded."""
     return HealthResponse(status="ok", model=config.GEMMA_MODEL_ID, loaded=MANAGER.loaded)
+
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(req: ChatRequest):
+    """Text-only chat (no audio) -- same model as /chat_audio."""
+    messages = [m.model_dump() for m in req.messages]
+    try:
+        reply = await run_in_threadpool(MANAGER.chat, messages, temperature=req.temperature)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"LLM error: {exc}")
+    return ChatResponse(reply=reply)
 
 
 @app.post("/chat_audio", response_model=ChatAudioResponse)

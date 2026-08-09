@@ -29,11 +29,15 @@ audio-capable checkpoint is needed later.
 | Method & path | Purpose |
 |---|---|
 | `GET /` | health + whether the model is currently loaded |
+| `POST /chat` | body `{messages, temperature?}` (OpenAI message format) -> `{reply}` -- text only, no audio |
 | `POST /chat_audio` | multipart: `file` (audio) + `system_prompt` + `text?` + `temperature?` -> `{reply}` |
 | `POST /unload` | unload the model, freeing its VRAM |
 
-## Example
+## Examples
 ```bash
+curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"system","content":"You are a helpful voice assistant."},{"role":"user","content":"hello"}]}'
+
 curl -X POST http://localhost:8001/chat_audio \
   -F "file=@question.wav" \
   -F "system_prompt=You are a helpful voice assistant. Answer concisely." \
