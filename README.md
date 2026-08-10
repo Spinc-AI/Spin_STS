@@ -19,19 +19,17 @@ JSON workflows), matching the simpler single-purpose scope here.
 | Folder | Status | Purpose |
 |---|---|---|
 | [`Core_LLM/`](Core_LLM/README.md) | done | Multimodal LLM (Gemma 4, audio-capable) — `/chat` (text) and `/chat_audio` (audio), both text out |
-| [`TTS/`](TTS/README.md) | pending (teammate) | Text in, audio out |
+| [`TTS/`](TTS/README.md) | done | OmniVoice backend — text in, audio out |
 | [`Controller/`](Controller/README.md) | done | Coordinates the two above via `POST /converse` — audio-or-text in, audio-or-text out |
+| [`demo_app/`](demo_app/README.md) | done | Tkinter chat client for the Controller — mic/drag-drop/text in, voice/text reply |
 
 ## Run
 
 Each service is standalone — install and run independently (see each
 folder's own README for details):
 ```bash
-cd Core_LLM  && pip install -r requirements.txt && ./run.sh   # :8001
-cd Controller && pip install -r requirements.txt && ./run.sh  # :9000
+cd Core_LLM   && pip install -r requirements.txt && ./run.sh   # :8001
+cd TTS        && pip install -r requirements.txt && ./run.sh   # :8002
+cd Controller && pip install -r requirements.txt && ./run.sh   # :9000
+cd demo_app   && pip install -r requirements.txt && python app.py
 ```
-`TTS/` has no code yet — the Controller is already wired to call it at
-`TTS_URL` (default `http://localhost:8002`) per the contract in
-`TTS/README.md`. `POST /converse` only calls TTS when `output=audio`, so the
-speech-to-text and text-to-text modes work end-to-end today; the two
-audio-output modes will 502 on the TTS step until that service exists.
