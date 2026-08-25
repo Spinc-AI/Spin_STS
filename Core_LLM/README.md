@@ -11,16 +11,22 @@ HTTP.
 ## Run
 ```bash
 pip install -r requirements.txt
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+pip freeze | grep -iE '^torch|^nvidia-|^triton' | xargs -r pip uninstall -y
+pip install torch torchvision
 ./run.sh          # Linux/macOS;  run.bat on Windows
 ```
-The second line matters: `requirements.txt` lists `torch`/`torchvision`
-unpinned (needed since `Gemma4Processor` imports `torchvision` even for
-audio-only requests), so a plain `pip install -r requirements.txt` may grab
-CPU-only or CUDA-version-mismatched builds. Reinstalling both together from
-the same CUDA-specific index right after resolves them as a matched pair —
-swap `cu121` for whatever your GPU driver's CUDA version actually supports
-(check with `nvidia-smi`).
+That second/third line matter, and pinning to an older CUDA-specific index
+(e.g. `--index-url .../cu121`) is the wrong move here, even though that's
+the right call elsewhere (see TTS's README) -- learned the hard way:
+Gemma4's audio-input path needs a `transformers` masking feature that
+requires **`torch>=2.6`**; pinning torch back to an older CUDA-tagged build
+to fix a *different* mismatch will silently reintroduce this one instead
+(text-only requests won't reveal it -- only audio input hits the codepath
+that needs it). The clean-uninstall-then-plain-install above lets pip
+resolve torch/torchvision/their CUDA runtime deps together as one
+consistent set matching your actual driver (check `nvidia-smi`'s reported
+CUDA version) -- don't reinstall just one of the two packages on top of
+what's already there, that's how the mismatch happens in the first place.
 
 Serves on `0.0.0.0:8001` (docs at `/docs`). No model loads at startup — the
 first request for a given key downloads it from Hugging Face and loads it
