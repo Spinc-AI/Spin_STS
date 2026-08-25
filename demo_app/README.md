@@ -51,9 +51,16 @@ connection dot (green/red) + a small `LLM ✓/✗ · TTS ✓/✗` readout, so yo
 tell at a glance which backend piece is down if a message fails. Click ⟳ to
 recheck after starting the Controller.
 
-**⚙ Settings** (top-right): optional system prompt override, sent as
-`system_prompt` on every call. Leave blank to use the Controller's own
-default.
+**⚙ Settings** (top-right):
+- **Model** — which of Core_LLM's registered Gemma checkpoints answers your
+  messages (see `Core_LLM/README.md` for the list — e.g. `gemma-4-e4b`,
+  `gemma-4-e2b-qat-mobile`). "(Core_LLM default)" leaves it unset, so
+  Core_LLM uses its own `DEFAULT_MODEL`. Click ⟳ next to it to re-fetch the
+  list from `GET /models` (useful if Core_LLM only just started). Every
+  assistant reply shows a small gray caption underneath naming which model
+  actually answered — handy for confirming your choice took effect.
+- **System prompt override** (optional), sent as `system_prompt` on every
+  call. Leave blank to use the Controller's own default.
 
 ## Notes
 

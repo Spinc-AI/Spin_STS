@@ -1,13 +1,14 @@
 """Core_LLM's model layer -- served directly via `transformers`, NOT Ollama.
 
-Ollama can't accept audio input at all, so the one model this service
-serves -- Gemma 4's lightest audio-capable ("Unified", encoder-free) variant
--- is loaded straight from Hugging Face weights instead.
+Ollama can't accept audio input at all, so these are loaded straight from
+Hugging Face weights instead. All three registered models are Gemma 4's
+"Unified" (encoder-free) family -- same architecture, same loading/chat code
+(GemmaAudioModel), just different checkpoints trading size for quality --
+unlike the bigger sibling project, which juggles genuinely different model
+architectures and needs a class per shape.
 
-Just one model, lazy-loaded on first request and kept warm after that (see
-LLMManager). No registry/multi-model swapping here -- this project only ever
-needs the one audio-capable model, unlike the bigger sibling project this is
-based on.
+At most one model is held in memory at a time (LLMManager), swapped when a
+request asks for a different registry key than what's currently loaded.
 """
 import gc
 import tempfile
@@ -44,8 +45,11 @@ class GemmaAudioModel:
 
     def load(self):
         self._processor = AutoProcessor.from_pretrained(self.model_id, padding_side="left")
+        # dtype="auto" -- NOT a fixed dtype like torch.bfloat16 -- so a
+        # pre-quantized checkpoint (e.g. the qat-mobile entry) loads at its
+        # own on-disk precision instead of being upcast back to full size.
         self._model = AutoModelForMultimodalLM.from_pretrained(
-            self.model_id, device_map=config.DEVICE_MAP, attn_implementation="sdpa"
+            self.model_id, device_map=config.DEVICE_MAP, dtype="auto", attn_implementation="sdpa"
         )
 
     def chat(self, messages: list[dict], audio_path: str | None = None,
@@ -86,40 +90,62 @@ class GemmaAudioModel:
             torch.cuda.empty_cache()
 
 
+# ============================================================
+# Registry -- short API key -> Hugging Face model id
+# ============================================================
+MODEL_REGISTRY = {
+    "gemma-4-e4b": config.GEMMA_E4B_MODEL_ID,
+    "gemma-4-e2b": config.GEMMA_E2B_MODEL_ID,
+    "gemma-4-e2b-qat-mobile": config.GEMMA_E2B_QAT_MOBILE_MODEL_ID,
+}
+
+
 class LLMManager:
-    """Lazy-loads the model on first use and keeps it warm; a lock guards
-    loading and generation so concurrent requests can't collide."""
+    """Holds at most one loaded model at a time, swapping when a request
+    asks for a different registry key than what's currently loaded. A single
+    lock guards both loading and generation so concurrent requests can't
+    swap the model out from under an in-flight generation."""
 
     def __init__(self):
-        self._model: GemmaAudioModel | None = None
+        self._current_key: str | None = None
+        self._current_model: GemmaAudioModel | None = None
         self._lock = threading.Lock()
 
+    def available(self) -> list[str]:
+        return list(MODEL_REGISTRY.keys())
+
     @property
-    def loaded(self) -> bool:
-        return self._model is not None
+    def loaded(self) -> str | None:
+        return self._current_key
 
-    def _ensure_loaded(self):
-        if self._model is None:
-            model = GemmaAudioModel(config.GEMMA_MODEL_ID)
+    def _ensure_loaded(self, key: str):
+        if key not in MODEL_REGISTRY:
+            raise KeyError(f"unknown model '{key}' -- available: {self.available()}")
+        if self._current_key != key:
+            if self._current_model is not None:
+                self._current_model.unload()
+            model = GemmaAudioModel(MODEL_REGISTRY[key])
             model.load()
-            self._model = model
+            self._current_model = model
+            self._current_key = key
 
-    def chat(self, messages: list[dict], audio: bytes | None = None,
+    def chat(self, key: str, messages: list[dict], audio: bytes | None = None,
              audio_format: str | None = None, temperature: float = 0.3) -> str:
         with self._lock:
-            self._ensure_loaded()
+            self._ensure_loaded(key)
             if audio is None:
-                return self._model.chat(messages, temperature=temperature)
+                return self._current_model.chat(messages, temperature=temperature)
             with tempfile.NamedTemporaryFile(suffix=f".{audio_format}") as f:
                 f.write(audio)
                 f.flush()
-                return self._model.chat(messages, audio_path=f.name, temperature=temperature)
+                return self._current_model.chat(messages, audio_path=f.name, temperature=temperature)
 
     def unload(self):
         with self._lock:
-            if self._model is not None:
-                self._model.unload()
-                self._model = None
+            if self._current_model is not None:
+                self._current_model.unload()
+                self._current_model = None
+                self._current_key = None
 
 
 MANAGER = LLMManager()

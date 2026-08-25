@@ -116,7 +116,7 @@ class ChatBubble(tk.Frame):
         "pending": ("#F1F0F0", "#8A8A8A"),
     }
 
-    def __init__(self, parent, style, text=None, audio_path=None, on_play=None):
+    def __init__(self, parent, style, text=None, audio_path=None, on_play=None, caption=None):
         bg, fg = self.COLORS[style]
         super().__init__(parent, bg=bg)
         inner = tk.Frame(self, bg=bg, padx=10, pady=6)
@@ -133,6 +133,10 @@ class ChatBubble(tk.Frame):
         else:
             tk.Label(inner, text=text or "", bg=bg, fg=fg, font=font,
                     wraplength=340, justify="left").pack(anchor="w")
+
+        if caption:  # e.g. which model actually answered -- only set on assistant replies
+            tk.Label(inner, text=caption, bg=bg, fg="#9A9A9A", font=("Segoe UI", 7)).pack(
+                anchor="w", pady=(2, 0))
 
 
 class ScrollableChat(ttk.Frame):
@@ -160,8 +164,9 @@ class ScrollableChat(ttk.Frame):
     def _on_mousewheel(self, event):
         self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
-    def add_bubble(self, style, text=None, audio_path=None, on_play=None):
-        bubble = ChatBubble(self.body, style, text=text, audio_path=audio_path, on_play=on_play)
+    def add_bubble(self, style, text=None, audio_path=None, on_play=None, caption=None):
+        bubble = ChatBubble(self.body, style, text=text, audio_path=audio_path, on_play=on_play,
+                            caption=caption)
         bubble.pack(anchor=ChatBubble.SIDE[style], pady=4, padx=10)
         self.canvas.update_idletasks()
         self.canvas.yview_moveto(1.0)
@@ -203,25 +208,49 @@ class TopBar(tk.Frame):
             self.status_sub.config(text="unreachable")
 
 
-class SettingsDialog(tk.Toplevel):
-    """Optional system prompt override. Controller URL lives in the top bar,
-    not duplicated here."""
+DEFAULT_MODEL_LABEL = "(Core_LLM default)"
 
-    def __init__(self, parent, system_prompt_var):
+
+class SettingsDialog(tk.Toplevel):
+    """Model choice (a Core_LLM registry key, via GET /models) + optional
+    system prompt override. Controller URL lives in the top bar, not
+    duplicated here."""
+
+    def __init__(self, parent, system_prompt_var, model_var, available_models, on_refresh_models):
         super().__init__(parent)
         self.title("Settings")
-        self.geometry("420x180")
+        self.geometry("420x300")
         self.resizable(False, False)
-        ttk.Label(self, text="System prompt override (optional):").pack(anchor="w", padx=10, pady=(10, 2))
+        self._model_var = model_var
+
+        ttk.Label(self, text="Model:").pack(anchor="w", padx=10, pady=(10, 2))
+        row = tk.Frame(self)
+        row.pack(anchor="w", padx=10)
+        self.model_box = ttk.Combobox(row, width=38, state="readonly",
+                                      values=[DEFAULT_MODEL_LABEL] + available_models)
+        self.model_box.set(model_var.get() or DEFAULT_MODEL_LABEL)
+        self.model_box.pack(side="left")
+        ttk.Button(row, text="⟳", width=3,
+                  command=lambda: on_refresh_models(self._apply_models)).pack(side="left", padx=(4, 0))
+
+        ttk.Label(self, text="System prompt override (optional):").pack(anchor="w", padx=10, pady=(14, 2))
         text = scrolledtext.ScrolledText(self, width=48, height=5, wrap="word")
         text.pack(padx=10)
         text.insert("1.0", system_prompt_var.get())
 
         def save():
+            chosen = self.model_box.get()
+            model_var.set("" if chosen == DEFAULT_MODEL_LABEL else chosen)
             system_prompt_var.set(text.get("1.0", tk.END).strip())
             self.destroy()
 
         ttk.Button(self, text="Save", command=save).pack(pady=10)
+
+    def _apply_models(self, models):
+        current = self.model_box.get()
+        self.model_box["values"] = [DEFAULT_MODEL_LABEL] + models
+        if current not in self.model_box["values"]:
+            self.model_box.set(DEFAULT_MODEL_LABEL)
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +266,8 @@ class STSChatApp(_AppBase):
         self.controller_url = tk.StringVar(value=DEFAULT_CONTROLLER_URL)
         self.output_mode = tk.StringVar(value="audio")
         self.system_prompt = tk.StringVar(value="")
+        self.selected_model = tk.StringVar(value="")  # "" = Core_LLM's own DEFAULT_MODEL
+        self._available_models = []
         self._pending_audio_path = None
         self._recorder = None
         self._record_start_time = None
@@ -283,6 +314,7 @@ class STSChatApp(_AppBase):
 
         self.chat.add_bubble("assistant", text=WELCOME_TEXT)
         self._check_connection()
+        self._refresh_models()
 
     # --- connection status ---
     def _check_connection(self):
@@ -297,8 +329,23 @@ class STSChatApp(_AppBase):
         except requests.RequestException:
             self.after(0, self.topbar.set_status, False)
 
+    # --- model list (Core_LLM registry keys, proxied through Controller's GET /models) ---
+    def _refresh_models(self, callback=None):
+        run_bg(self._refresh_models_bg, callback)
+
+    def _refresh_models_bg(self, callback):
+        try:
+            r = requests.get(f"{self.controller_url.get().rstrip('/')}/models", timeout=TIMEOUT_SHORT)
+            r.raise_for_status()
+            self._available_models = r.json().get("available", [])
+        except requests.RequestException:
+            self._available_models = []
+        if callback:
+            self.after(0, callback, self._available_models)
+
     def _open_settings(self):
-        SettingsDialog(self, self.system_prompt)
+        SettingsDialog(self, self.system_prompt, self.selected_model,
+                       self._available_models, self._refresh_models)
 
     # --- pending audio attachment (mic / browse / drop, all share one slot) ---
     def _set_pending_audio(self, path):
@@ -411,28 +458,34 @@ class STSChatApp(_AppBase):
             system_prompt = self.system_prompt.get().strip()
             if system_prompt:
                 data["system_prompt"] = system_prompt
+            model = self.selected_model.get().strip()
+            if model:
+                data["model"] = model
 
             r = requests.post(f"{self.controller_url.get().rstrip('/')}/converse",
                               files=files, data=data, timeout=TIMEOUT_LONG)
             r.raise_for_status()
 
             if output_mode == "text":
-                reply = r.json().get("reply", "")
-                self.after(0, self._on_reply, pending_bubble, "assistant", reply, None)
+                body = r.json()
+                self.after(0, self._on_reply, pending_bubble, "assistant", body.get("reply", ""),
+                          None, body.get("model"))
             else:
                 path = tempfile.NamedTemporaryFile(suffix=".wav", delete=False).name
                 with open(path, "wb") as out:
                     out.write(r.content)
-                self.after(0, self._on_reply, pending_bubble, "assistant", "Voice reply", path)
+                self.after(0, self._on_reply, pending_bubble, "assistant", "Voice reply", path,
+                          r.headers.get("X-Model"))
         except requests.RequestException as exc:
-            self.after(0, self._on_reply, pending_bubble, "error", error_detail(exc), None)
+            self.after(0, self._on_reply, pending_bubble, "error", error_detail(exc), None, None)
         finally:
             if f:
                 f.close()
 
-    def _on_reply(self, pending_bubble, style, text, audio_path):
+    def _on_reply(self, pending_bubble, style, text, audio_path, model_used=None):
         self.chat.remove_bubble(pending_bubble)
-        self.chat.add_bubble(style, text=text, audio_path=audio_path, on_play=self._play)
+        self.chat.add_bubble(style, text=text, audio_path=audio_path, on_play=self._play,
+                             caption=model_used)
         if audio_path:
             self._play(audio_path)
 

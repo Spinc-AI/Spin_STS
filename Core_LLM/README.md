@@ -1,45 +1,73 @@
 # Core_LLM Service
 
-Wraps one local multimodal model — Gemma 4's lightest audio-capable
-("Unified", encoder-free) variant — behind a small HTTP API. Served directly
-via `transformers`, **not Ollama** (Ollama can't accept audio input at all).
-`model.py` holds the model wrapper and `LLMManager` (lazy-loaded on first
-request, kept warm after); `main.py` exposes it over HTTP.
+Wraps a small set of local multimodal models — all Gemma 4's "Unified"
+(encoder-free) audio-capable family, different checkpoints trading size for
+quality — behind a small HTTP API. Served directly via `transformers`,
+**not Ollama** (Ollama can't accept audio input at all). `model.py` holds
+the model wrapper and `LLMManager` (one model loaded at a time, swapped when
+a request asks for a different registry key); `main.py` exposes it over
+HTTP.
 
 ## Run
 ```bash
 pip install -r requirements.txt
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 ./run.sh          # Linux/macOS;  run.bat on Windows
 ```
-Serves on `0.0.0.0:8001` (docs at `/docs`). The model doesn't load at
-startup — the first request downloads it from Hugging Face and loads it into
-VRAM (slow the first time, fast after). See `.env.example` to override the
-model ID.
+The second line matters: `requirements.txt` lists `torch`/`torchvision`
+unpinned (needed since `Gemma4Processor` imports `torchvision` even for
+audio-only requests), so a plain `pip install -r requirements.txt` may grab
+CPU-only or CUDA-version-mismatched builds. Reinstalling both together from
+the same CUDA-specific index right after resolves them as a matched pair —
+swap `cu121` for whatever your GPU driver's CUDA version actually supports
+(check with `nvidia-smi`).
 
-## Model
+Serves on `0.0.0.0:8001` (docs at `/docs`). No model loads at startup — the
+first request for a given key downloads it from Hugging Face and loads it
+into VRAM (slow the first time, fast after). See `.env.example` to override
+any model ID or the default registry key.
 
-| Model | Role |
-|---|---|
-| `google/gemma-4-E4B-it` (default) | Text **and audio** in, text out — Gemma 4's lightest audio-capable variant |
+**Before deploying to a GPU with less than ~16GB VRAM**, don't just trust
+the default — check the Models table below against your actual card. The
+default (`gemma-4-e2b-qat-mobile`) fits a 12GB card comfortably alongside
+`TTS/`, but requesting `gemma-4-e4b` (~16GB) on a 12GB card will fail to
+load, full stop — that model's raw weight size alone exceeds total VRAM,
+independent of anything else running.
 
-Apache 2.0. Override via `GEMMA_MODEL_ID` in `.env` if a different
-audio-capable checkpoint is needed later.
+## Models
+
+| `model` key | Model | Size | Notes |
+|---|---|---|---|
+| `gemma-4-e4b` | `google/gemma-4-E4B-it` | ~16GB (BF16) | Best quality of the three |
+| `gemma-4-e2b` | `google/gemma-4-E2B-it` | ~10GB (BF16) | Smaller, some quality loss |
+| `gemma-4-e2b-qat-mobile` (default) | `google/gemma-4-E2B-it-qat-mobile-transformers` | ~2.5GB (pre-quantized) | Smallest by far — fits alongside `TTS/` on a single 12GB GPU with room to spare; expect a further quality step down from plain E2B |
+
+All three: text **and** audio in, text out. Apache 2.0. Override any model
+ID, or the default key (`DEFAULT_MODEL`), via `.env`.
 
 ## API
 | Method & path | Purpose |
 |---|---|
-| `GET /` | health + whether the model is currently loaded |
-| `POST /chat` | body `{messages, temperature?}` (OpenAI message format) -> `{reply}` -- text only, no audio |
-| `POST /chat_audio` | multipart: `file` (audio) + `system_prompt` + `text?` + `temperature?` -> `{reply}` |
-| `POST /unload` | unload the model, freeing its VRAM |
+| `GET /` | health + which model (if any) is currently loaded |
+| `GET /models` | registered model keys + which one is loaded |
+| `POST /chat` | body `{messages, model?, temperature?}` (OpenAI message format) -> `{model, reply}` -- text only, no audio |
+| `POST /chat_audio` | multipart: `file` (audio) + `system_prompt` + `text?` + `model?` + `temperature?` -> `{model, reply}` |
+| `POST /unload` | unload the currently-loaded model, freeing its VRAM |
+
+`model` is a registry key from `GET /models`; omitted on either endpoint, it
+falls back to `DEFAULT_MODEL`. Requesting a different key than what's
+currently loaded swaps it — the old one is unloaded first, so only one model
+occupies VRAM at a time. An unknown key returns a `404` with the valid list.
 
 ## Examples
 ```bash
+curl http://localhost:8001/models
+
 curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" \
-  -d '{"messages":[{"role":"system","content":"You are a helpful voice assistant."},{"role":"user","content":"hello"}]}'
+  -d '{"messages":[{"role":"system","content":"You are a helpful voice assistant."},{"role":"user","content":"hello"}], "model":"gemma-4-e2b-qat-mobile"}'
 
 curl -X POST http://localhost:8001/chat_audio \
   -F "file=@question.wav" \
   -F "system_prompt=You are a helpful voice assistant. Answer concisely." \
-  -F "text=Optional extra instructions"
+  -F "model=gemma-4-e4b"
 ```

@@ -6,7 +6,7 @@ rewritten internally without touching this file, as long as its API holds.
 
 ```
 user  <->  Controller  <->  Core_LLM (audio-capable Gemma)
-                        <->  TTS (pending -- see TTS/README.md)
+                        <->  TTS (OmniVoice)
 ```
 
 Input (audio or text) and output (audio or text) are independent choices,
@@ -20,8 +20,11 @@ all served by one endpoint, `POST /converse`:
 | Text-to-text | `text` | `text` | Core_LLM `/chat` only |
 
 TTS is only ever called when `output=audio` — the text-to-text and
-speech-to-text modes already work today even though `TTS/` has no
-implementation yet.
+speech-to-text modes work even if TTS happens to be down.
+
+An optional `model` field picks which of Core_LLM's registered Gemma
+checkpoints answers the request (see `GET /models`, proxied straight from
+Core_LLM) — omitted, Core_LLM falls back to its own `DEFAULT_MODEL`.
 
 ## Run
 ```bash
@@ -37,28 +40,29 @@ it'll fail with a 502 pointing at whichever module isn't up.
 | Method & path | Purpose |
 |---|---|
 | `GET /health` | controller + Core_LLM + TTS reachability |
-| `POST /converse` | multipart: exactly one of `file` (audio) or `text`, plus optional `system_prompt` and `output` (`audio` default, or `text`) -> audio (`audio/wav`) or JSON `{reply}` |
+| `GET /models` | proxies Core_LLM's registered model keys + which is loaded |
+| `POST /converse` | multipart: exactly one of `file` (audio) or `text`, plus optional `system_prompt`, `model`, and `output` (`audio` default, or `text`) -> audio (`audio/wav`, with an `X-Model` header) or JSON `{reply, model}` |
 
 ## Examples
 ```bash
+curl http://localhost:9000/models
+
 # speech-to-speech
 curl -X POST http://localhost:9000/converse -F "file=@question.wav" -o reply.wav
 
-# speech-to-text (no TTS needed -- works today)
+# speech-to-text (works even if TTS is down)
 curl -X POST http://localhost:9000/converse -F "file=@question.wav" -F "output=text"
 
-# text-to-speech
-curl -X POST http://localhost:9000/converse -F "text=What's the weather like?" -o reply.wav
+# text-to-speech, explicit model choice
+curl -X POST http://localhost:9000/converse \
+  -F "text=What's the weather like?" -F "model=gemma-4-e4b" -o reply.wav
 
-# text-to-text (no TTS needed -- works today)
+# text-to-text (works even if TTS is down)
 curl -X POST http://localhost:9000/converse -F "text=What's the weather like?" -F "output=text"
 ```
 
 ## Status
 
-Core_LLM is implemented. TTS is **not** — it's owned by another team member
-and will be dropped into `../TTS/` once ready; `controller.py`'s
-`tts_synthesize()` already calls the contract documented in
-`TTS/README.md`, so no changes should be needed here once that lands (unless
-the real API ends up shaped differently). Until then, `output=text` modes
-are the only ones you can fully test end-to-end.
+Core_LLM and TTS are both implemented and merged. `demo_app/` is the
+easiest way to exercise all four modes without writing curl commands by
+hand.
