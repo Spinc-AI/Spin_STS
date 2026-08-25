@@ -10,18 +10,25 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessage]
+    model: str | None = None        # registry key -- falls back to config.DEFAULT_MODEL
     temperature: float = 0.3
 
 
 class ChatResponse(BaseModel):
+    model: str
     reply: str
 
 
 class ChatAudioResponse(BaseModel):
+    model: str
     reply: str
 
 
 class HealthResponse(BaseModel):
     status: str
-    model: str
-    loaded: bool
+    model: str | None = None   # currently loaded registry key, or None if nothing's loaded yet
+
+
+class ModelsResponse(BaseModel):
+    available: list[str]
+    loaded: str | None = None
