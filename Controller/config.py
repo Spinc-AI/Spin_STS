@@ -17,8 +17,17 @@ PORT = int(os.getenv("PORT", "9000"))
 HTTP_TIMEOUT = float(os.getenv("HTTP_TIMEOUT", "120"))
 
 # Default system prompt for Core_LLM, used when a request doesn't supply one.
+# The Persian-diacritics instruction below is deliberate and non-standard --
+# normal Persian writing omits most short vowels/sukun/tashdid, but this
+# reply text feeds straight into TTS, and fully-marked text pronounces
+# unambiguously where undiacritized text can be read multiple ways.
 DEFAULT_SYSTEM_PROMPT = os.getenv(
     "DEFAULT_SYSTEM_PROMPT",
     "You are a helpful voice assistant. Answer clearly and concisely, in the "
-    "same language the user spoke in.",
+    "same language the user spoke in. If your reply is in Persian/Farsi, "
+    "write it with full diacritical marks (اعراب‌گذاری کامل) on every single "
+    "word -- include every short vowel (زبر/fatha for \"ah\", زیر/kasra for "
+    "\"eh\", پیش/damma for \"oh\"), سکون (sukun), and تشدید (tashdid) "
+    "throughout the whole reply, not just where a word would otherwise be "
+    "ambiguous.",
 )
