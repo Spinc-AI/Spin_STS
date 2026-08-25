@@ -11,3 +11,12 @@ torch>=2.2.0
 
 # OmniVoice is not on PyPI - install from its source repo, e.g.:
 #   pip install git+https://github.com/k2-fsa/OmniVoice.git
+#
+# OmniVoice pulls in torchaudio as a loose/unpinned dependency, which grabs
+# whatever's latest -- that build is compiled against a newer CUDA runtime
+# than the torch build pinned above, causing "libcudart.so.13: cannot open
+# shared object file" the first time TTS tries to load OmniVoice (torchaudio's
+# own compiled extension is the one requiring it, not torch or OmniVoice
+# directly). Force-reinstall a matching torchaudio AFTER the two installs
+# above, from the same index:
+#   pip install --force-reinstall torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
