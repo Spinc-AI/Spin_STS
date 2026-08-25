@@ -11,8 +11,10 @@ python-multipart   # multipart form parsing, needed for /chat_audio's UploadFile
 # GPU with real VRAM headroom. Install the CUDA build of torch, see
 # https://pytorch.org for the right command for your system.
 torch
+torchvision          # Gemma4Processor's image-handling code path imports this unconditionally,
+                     # even for audio-only requests -- see the CUDA-matching note below (same as torch).
 transformers        # needs a version with Gemma4 (AutoModelForMultimodalLM) support -- use latest
 accelerate           # for device_map="auto"
 soundfile
 librosa
-pillow               # Gemma4Processor imports this unconditionally, even for audio-only requests
+pillow               # Gemma4Processor imports this unconditionally too, same reason as torchvision

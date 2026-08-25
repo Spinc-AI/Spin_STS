@@ -11,12 +11,28 @@ HTTP.
 ## Run
 ```bash
 pip install -r requirements.txt
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 ./run.sh          # Linux/macOS;  run.bat on Windows
 ```
+The second line matters: `requirements.txt` lists `torch`/`torchvision`
+unpinned (needed since `Gemma4Processor` imports `torchvision` even for
+audio-only requests), so a plain `pip install -r requirements.txt` may grab
+CPU-only or CUDA-version-mismatched builds. Reinstalling both together from
+the same CUDA-specific index right after resolves them as a matched pair —
+swap `cu121` for whatever your GPU driver's CUDA version actually supports
+(check with `nvidia-smi`).
+
 Serves on `0.0.0.0:8001` (docs at `/docs`). No model loads at startup — the
 first request for a given key downloads it from Hugging Face and loads it
 into VRAM (slow the first time, fast after). See `.env.example` to override
 any model ID or the default registry key.
+
+**Before deploying to a GPU with less than ~16GB VRAM**, don't just trust
+the default — check the Models table below against your actual card. The
+default (`gemma-4-e2b-qat-mobile`) fits a 12GB card comfortably alongside
+`TTS/`, but requesting `gemma-4-e4b` (~16GB) on a 12GB card will fail to
+load, full stop — that model's raw weight size alone exceeds total VRAM,
+independent of anything else running.
 
 ## Models
 
